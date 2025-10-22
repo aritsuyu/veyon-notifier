@@ -1,14 +1,18 @@
 import time
 import psutil
 import subprocess
-from threading import Thread
-from plyer import notification
+from threading import Thread, Lock
 from PIL import Image, ImageDraw
 import pystray
 
-# Lista de processos a monitorar
 PROCESSOS_ALVO = ["veyon-service.exe", "veyon-server.exe", "veyon-worker.exe"]
-LIMITE_MBPS = 0.4  # limite em MB/s
+LIMITE_MBPS = 0.5
+#abaixo de 0.5mb ele vai disparar toda hora pois ele fica em uma mini janela
+#>= 0.4 ele vai disparar quando clicar na janela
+
+# Controle pra evitar múltiplos explorers
+explorer_aberto = False
+lock = Lock()
 
 def criar_icone():
     img = Image.new('RGB', (64, 64), color='blue')
@@ -17,10 +21,17 @@ def criar_icone():
     return img
 
 def abrir_explorer_60s():
-    # abre explorer.exe
-    proc = subprocess.Popen("explorer.exe")
-    # espera 60 segundos
+    global explorer_aberto
+    with lock:
+        if explorer_aberto:
+            return
+        explorer_aberto = True
+
+    subprocess.Popen("explorer.exe")
     time.sleep(60)
+    with lock:
+        explorer_aberto = False
+
 def monitor_rede():
     last_total = psutil.net_io_counters().bytes_sent + psutil.net_io_counters().bytes_recv
     while True:
@@ -31,19 +42,14 @@ def monitor_rede():
         usage_mbps = usage_bytes / 1024 / 1024  # MB/s
 
         processos_ativos = [p.info['name'].lower() for p in psutil.process_iter(['name'])]
-        if any(proc.lower() in processos_ativos for proc in PROCESSOS_ALVO):
+        if any(proc in processos_ativos for proc in PROCESSOS_ALVO):
             if usage_mbps > LIMITE_MBPS:
-                # notification.notify(
-                    # title="Alerta de Charles",
-                    # message=f"Rede alta: {usage_mbps:.2f} MB/s",
-                    # timeout=5
-                # )
-                # abre explorer e fecha depois de 60s em thread separada
                 Thread(target=abrir_explorer_60s, daemon=True).start()
 
 def iniciar_tray():
-    icon = pystray.Icon("MonitorRede", criar_icone(), "Monitor de Charles")
+    icon = pystray.Icon("MonitorCharles", criar_icone(), "Monitor de Charles")
     icon.run()
 
+# Inicia o monitor em thread separada
 Thread(target=monitor_rede, daemon=True).start()
 iniciar_tray()
